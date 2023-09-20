@@ -9,6 +9,19 @@ from xml.etree.ElementTree import Element
 
 
 def parse_panels(root: Element):
+    """
+    Parse the panels object in the XML tree format into a dictionary.
+
+    Parameters
+    ----------
+    root: Element
+        The root of the XML tree
+
+    Returns
+    -------
+    list
+        A dictionary of panel information
+    """
     panel_list = []
     all_panel_elements = root[0]
     for panel_el in all_panel_elements:
@@ -36,7 +49,7 @@ def parse_panels(root: Element):
     return panel_list
 
 
-def to_cv2_bbox(bbox: list[float], image_size: int = 160):
+def bbox_to_xyxy(bbox: list[float], image_size: int = 160):
     [center_y_ratio, center_x_ratio, width_ratio, height_ratio] = bbox
     width_px, height_px = width_ratio * image_size, height_ratio * image_size
     center_x_px, center_y_px = center_x_ratio * image_size, center_y_ratio * image_size
@@ -44,7 +57,7 @@ def to_cv2_bbox(bbox: list[float], image_size: int = 160):
     top_left_y_px = int(center_y_px - height_px / 2)
     bottom_right_x_px = int(center_x_px + width_px / 2)
     bottom_right_y_px = int(center_y_px + height_px / 2)
-    return (top_left_x_px, top_left_y_px), (bottom_right_x_px, bottom_right_y_px)
+    return [top_left_x_px, top_left_y_px, bottom_right_x_px, bottom_right_y_px]
 
 
 def plot_example(panels: np.ndarray, fig: plt.Figure | None = None):
@@ -70,6 +83,7 @@ def plot_example(panels: np.ndarray, fig: plt.Figure | None = None):
         ax.imshow(cv2.cvtColor(panels[8 + i], cv2.COLOR_BGR2RGB))
         fig.add_subplot(ax)
     return fig
+
 
 '''
 example_data = np.load('./distribute_nine/RAVEN_0_train.npz')
