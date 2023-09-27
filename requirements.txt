@@ -4,3 +4,7 @@ scipy
 opencv-python
 pillow
 matplotlib
+pandas
+jupyter
+torch
+torchvision

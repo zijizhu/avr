@@ -10,13 +10,13 @@ from torch.utils.data import Dataset
 from utils import parse_panels, bbox_to_xyxy
 
 
-class AVRDataset(Dataset):
+class AVRStage1Dataset(Dataset):
     def __init__(
             self,
             dataset_dir: str,
             split: str = 'train',
-            transform=None,
-            target_transform=None):
+            transform = None,
+            target_transform = None):
         assert split in ['train', 'val', 'test']
 
         self.split = split
@@ -32,10 +32,8 @@ class AVRDataset(Dataset):
         self.dataset_path = Path(dataset_dir)
         self.transform = transform
         self.target_transform = target_transform
-        self.all_file_stems = list(
-            fn.stem for fn in (self.dataset_path / Path(self.configurations[0])).glob(f'*_{self.split}.npz'))
-        self.all_file_paths = [Path(self.dataset_path, config, base_fn) for config, base_fn in
-                               product(self.configurations, self.all_file_stems)]
+        self.all_file_stems = list(fn.stem for fn in (self.dataset_path / Path(self.configurations[0])).glob(f'*_{self.split}.npz'))
+        self.all_file_paths = [Path(self.dataset_path, config, base_fn) for config, base_fn in product(self.configurations, self.all_file_stems)]
 
         self.id2type = ['none', 'triangle', 'square', 'pentagon', 'hexagon', 'circle']
         self.id2size = [0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
@@ -52,7 +50,7 @@ class AVRDataset(Dataset):
         file_path, panel_idx = self.get_panel_by_id(idx)
 
         npz = np.load(file_path.with_suffix('.npz'))
-        image = torch.as_tensor(npz['image'][panel_idx, :, :], dtype=torch.float)
+        image = torch.as_tensor(npz['image'][panel_idx, :, :], dtype=torch.float) / 255
         image = torch.unsqueeze(image, dim=0)
 
         targets = {}
@@ -78,7 +76,7 @@ class AVRDataset(Dataset):
         targets['labels'] = torch.as_tensor(types, dtype=torch.int64)
         targets['sizes'] = torch.as_tensor(sizes, dtype=torch.int64)
         targets['colors'] = torch.as_tensor(colors, dtype=torch.int64)
-        targets['idx'] = torch.tensor(idx)
+        targets['image_id'] = torch.tensor(idx)
         # targets['image'] = image
 
         return image, targets
