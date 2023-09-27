@@ -49,6 +49,18 @@ def parse_panels(root: Element):
     return panel_list
 
 
+def parse_rules(root: ET.Element):
+    all_rule_groups = root[1]
+    all_rules = []
+    for rule_group_el in all_rule_groups:
+        component_rules = {'component_id': rule_group_el.attrib['id'],
+                           'rules': []}
+        for rule_el in rule_group_el:
+            component_rules['rules'].append(rule_el.attrib)
+        all_rules.append(component_rules)
+    return all_rules
+
+
 def bbox_to_xyxy(bbox: list[float], image_size: int = 160):
     [center_y_ratio, center_x_ratio, width_ratio, height_ratio] = bbox
     width_px, height_px = width_ratio * image_size, height_ratio * image_size
