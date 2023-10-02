@@ -302,7 +302,7 @@ def main():
     num_elements = 9
     pos_num_rule_idx_map = pos_num_rule_idx_map_four
 
-    path = "/Users/richardzhu/Developer/research/avr/dataset"
+    path = os.path.join(os.getcwd(), 'dataset')
     configs = [
         ("center_single", 1),
         ("distribute_four", 1),

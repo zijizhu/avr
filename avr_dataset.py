@@ -1,4 +1,5 @@
 import json
+import pandas as pd
 import xml.etree.ElementTree as ET
 from itertools import product
 from pathlib import Path
@@ -7,7 +8,9 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from utils import parse_panels, bbox_to_xyxy
+from utils import parse_panels, bbox_to_xyxy, parse_rules
+
+# Stage 1
 
 
 class AVRStage1Dataset(Dataset):
@@ -84,3 +87,72 @@ class AVRStage1Dataset(Dataset):
 
 def collate_fn(batch):
     return tuple(zip(*batch))
+
+
+# Stage 2
+
+
+def get_stage2_dataset(dataset_dir: str, split: str):
+    configurations = [
+        'distribute_nine',
+        'center_single',
+        'distribute_four',
+        'distribute_nine',
+        'in_center_single_out_center_single',
+        'in_distribute_four_out_center_single',
+        'left_center_single_right_center_single',
+        'up_center_single_down_center_single'
+    ]
+    id2type = ['none', 'triangle', 'square', 'pentagon', 'hexagon', 'circle']
+    id2size = [0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+    id2color = [255, 224, 196, 168, 140, 112, 84, 56, 28, 0]
+    id2slot = [(0.5, 0.5, 0.33, 0.33), (0.42, 0.42, 0.15, 0.15), (0.25, 0.75, 0.5, 0.5), (0.5, 0.75, 0.5, 0.5),
+               (0.5, 0.5, 1, 1), (0.75, 0.5, 0.5, 0.5), (0.58, 0.58, 0.15, 0.15), (0.83, 0.83, 0.33, 0.33),
+               (0.83, 0.16, 0.33, 0.33), (0.42, 0.58, 0.15, 0.15), (0.83, 0.5, 0.33, 0.33), (0.16, 0.5, 0.33, 0.33),
+               (0.75, 0.25, 0.5, 0.5), (0.5, 0.83, 0.33, 0.33), (0.58, 0.42, 0.15, 0.15), (0.5, 0.25, 0.5, 0.5),
+               (0.16, 0.83, 0.33, 0.33), (0.16, 0.16, 0.33, 0.33), (0.5, 0.16, 0.33, 0.33), (0.25, 0.5, 0.5, 0.5),
+               (0.75, 0.75, 0.5, 0.5), (0.25, 0.25, 0.5, 0.5)]
+    slot2id = {slot: idx for idx, slot in enumerate(id2slot)}
+
+    dataset_path = Path(dataset_dir)
+    all_file_stems = list(fn.stem for fn in (dataset_path / Path(configurations[0])).glob(f'*_{split}.npz'))
+    all_file_paths = [Path(dataset_path, config, base_fn) for config, base_fn in
+                      product(configurations, all_file_stems)]
+
+    full_data_dict = []
+    full_data_pd = []
+
+    for file_path in all_file_paths:
+        xml = ET.parse(file_path.with_suffix('.xml'))
+        xml_root = xml.getroot()
+        panel_info_list = parse_panels(xml_root)
+        rules = parse_rules(xml_root)
+
+        context_panels = panel_info_list[:6]
+
+        for panel_idx, panel in enumerate(context_panels):
+            for component in panel['components']:
+                component_idx = component['component']['id']
+                comp_slots_data = {}
+                for entity in component['entities']:
+                    entity_size = eval(entity['Size'])
+                    entity_type = eval(entity['Type'])
+                    entity_color = eval(entity['Color'])
+                    entity_slot_id = slot2id[tuple(eval(entity['bbox']))]
+                    comp_slots_data.update(
+                        {entity_slot_id: {'size': entity_size, 'type': entity_type, 'color': entity_color}})
+
+                data = {'file': file_path, 'panel': panel_idx, 'component': component_idx}
+                full_data_dict.append({**data, 'slots': comp_slots_data})
+                data_pd = data.copy()
+
+                for slot_idx in range(0, len(id2slot)):
+                    if slot_idx in comp_slots_data:
+                        data_pd.update({f'slot{slot_idx}_color': comp_slots_data[slot_idx]['color'],
+                                        f'slot{slot_idx}_size': comp_slots_data[slot_idx]['size'],
+                                        f'slot{slot_idx}_type': comp_slots_data[slot_idx]['type']})
+                    else:
+                        data_pd.update(
+                            {f'slot{slot_idx}_color': -1, f'slot{slot_idx}_size': -1, f'slot{slot_idx}_type': -1})
+                full_data_pd.append(data_pd)
+    return pd.DataFrame(full_data_pd)
