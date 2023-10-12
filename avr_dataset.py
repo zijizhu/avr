@@ -112,7 +112,7 @@ id2slot = [(0.5, 0.5, 0.33, 0.33), (0.42, 0.42, 0.15, 0.15), (0.25, 0.75, 0.5, 0
 slot2id = {slot: idx for idx, slot in enumerate(id2slot)}
 
 
-def get_stage2_dataset(dataset_dir: str, split: str):
+def extract_stage2_ground_truth(dataset_dir: str, split: str):
     dataset_path = Path(dataset_dir)
     all_file_stems = list(fn.stem for fn in (dataset_path / Path(configurations[0])).glob(f'*_{split}.npz'))
     all_file_paths = [Path(dataset_path, config, base_fn) for config, base_fn in
@@ -131,7 +131,7 @@ def get_stage2_dataset(dataset_dir: str, split: str):
 
         # Get rules (labels)
         for component in component_rules:
-            rule_data = {'file_path': file_path, 'component': component['component_id']}
+            rule_data = {'file_path': str(file_path), 'component': int(component['component_id'])}
             for rule in component['rules']:
                 if (rule['attr'] == 'Number/Position') or (rule['attr'] == 'Number') or (rule['attr'] == 'Position'):
                     rule_data['number'] = rule['name']
@@ -157,7 +157,7 @@ def get_stage2_dataset(dataset_dir: str, split: str):
                     comp_slots_data.update(
                         {entity_slot_id: {'size': entity_size, 'type': entity_type, 'color': entity_color}})
 
-                data = {'file': file_path, 'panel': panel_idx, 'component': component_idx}
+                data = {'file': str(file_path), 'panel': int(panel_idx), 'component': int(component_idx)}
                 full_data_dict.append({**data, 'slots': comp_slots_data})
                 data_pd = data.copy()
 
@@ -171,3 +171,40 @@ def get_stage2_dataset(dataset_dir: str, split: str):
                             {f'slot{slot_idx}_color': -1, f'slot{slot_idx}_size': -1, f'slot{slot_idx}_type': -1})
                 full_panel_data.append(data_pd)
     return pd.DataFrame(full_panel_data), pd.DataFrame(full_rule_data)
+
+
+def prepare_stage2_dataset(panels_df: pd.DataFrame, rules_df: pd.DataFrame, merge_row=True):
+    panels_df_copy = panels_df.copy()
+
+    if merge_row:
+        panels_df_copy['row'] = np.where(panels_df_copy['panel'] < 3, 0, 1)
+        panels_df_copy['panel'] = np.where(panels_df_copy['panel'] < 3,
+                                           panels_df_copy['panel'],
+                                           panels_df_copy['panel'] - 3)
+        reshaped_indices = ['file', 'component', 'row', 'panel']
+    else:
+
+        reshaped_indices = ['file', 'component', 'panel']
+
+    reshaped_panels_df = panels_df_copy.set_index(reshaped_indices).unstack(level=-1)
+    reshaped_panels_df.columns.names = ['slot_attr', 'panel']
+    reshaped_panels_df.columns = reshaped_panels_df.columns.swaplevel(0, 1)
+    reshaped_panels_df = reshaped_panels_df.sort_index(axis=1, level=0)
+
+    index_tuples = []
+    for panel_idx, slot_idx, attr in list(product(range(0, 3) if merge_row else range(0, 6),
+                                                  range(0, 22),
+                                                  ['color', 'size', 'type'])):
+        index_tuples.append((panel_idx, f'slot{slot_idx}_{attr}'))
+    # index_tuples = list(product(range(0, 6), range(0, 22), ['color', 'size', 'type']))
+    multi_index = pd.MultiIndex.from_tuples(index_tuples, names=['panel', 'slot_attr'])
+    reshaped_panels_df = pd.DataFrame(reshaped_panels_df, columns=multi_index)
+
+    reshaped_panels_df.columns = reshaped_panels_df.columns.map(lambda x: 'panel' + '_'.join(list(map(str, x))))
+
+    rules_df = rules_df.rename(columns={'file_path': 'file'})
+    rules_df = rules_df.set_index(['file', 'component'])
+
+    final_df = reshaped_panels_df.join(rules_df)
+
+    return final_df
