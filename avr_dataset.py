@@ -112,14 +112,42 @@ id2slot = [(0.5, 0.5, 0.33, 0.33), (0.42, 0.42, 0.15, 0.15), (0.25, 0.75, 0.5, 0
 slot2id = {slot: idx for idx, slot in enumerate(id2slot)}
 
 
+def panel_dict_to_df(indices: list | range, panel_dict: dict, file_path: str):
+    full_panel_data = []
+    for panel_idx, panel in zip(indices, panel_dict):
+        for component in panel['components']:
+            component_idx = component['component']['id']
+            comp_slots_data = {}
+            for entity in component['entities']:
+                entity_size = eval(entity['Size'])
+                entity_type = eval(entity['Type'])
+                entity_color = eval(entity['Color'])
+                entity_slot_id = slot2id[tuple(eval(entity['bbox']))]
+                comp_slots_data.update(
+                    {entity_slot_id: {'size': entity_size, 'type': entity_type, 'color': entity_color}})
+
+            data = {'file': str(file_path), 'panel': int(panel_idx), 'component': int(component_idx)}
+            data_pd = data.copy()
+
+            for slot_idx in range(0, len(id2slot)):
+                if slot_idx in comp_slots_data:
+                    data_pd.update({f'slot{slot_idx}_color': comp_slots_data[slot_idx]['color'],
+                                    f'slot{slot_idx}_size': comp_slots_data[slot_idx]['size'],
+                                    f'slot{slot_idx}_type': comp_slots_data[slot_idx]['type']})
+                else:
+                    data_pd.update(
+                        {f'slot{slot_idx}_color': -1, f'slot{slot_idx}_size': -1, f'slot{slot_idx}_type': -1})
+            full_panel_data.append(data_pd)
+    return pd.DataFrame(full_panel_data)
+
+
 def extract_stage2_ground_truth(dataset_dir: str, split: str):
     dataset_path = Path(dataset_dir)
     all_file_stems = list(fn.stem for fn in (dataset_path / Path(configurations[0])).glob(f'*_{split}.npz'))
     all_file_paths = [Path(dataset_path, config, base_fn) for config, base_fn in
                       product(configurations, all_file_stems)]
 
-    full_data_dict = []
-    full_panel_data = []
+    all_panel_df = []
     full_rule_data = []
 
     for file_path in all_file_paths:
@@ -145,32 +173,10 @@ def extract_stage2_ground_truth(dataset_dir: str, split: str):
             full_rule_data.append(rule_data)
 
         # Get discrete panel representations (features)
-        for panel_idx, panel in enumerate(context_panels):
-            for component in panel['components']:
-                component_idx = component['component']['id']
-                comp_slots_data = {}
-                for entity in component['entities']:
-                    entity_size = eval(entity['Size'])
-                    entity_type = eval(entity['Type'])
-                    entity_color = eval(entity['Color'])
-                    entity_slot_id = slot2id[tuple(eval(entity['bbox']))]
-                    comp_slots_data.update(
-                        {entity_slot_id: {'size': entity_size, 'type': entity_type, 'color': entity_color}})
+        panel_df = panel_dict_to_df(range(len(context_panels)), context_panels, str(file_path))
+        all_panel_df.append(panel_df)
 
-                data = {'file': str(file_path), 'panel': int(panel_idx), 'component': int(component_idx)}
-                full_data_dict.append({**data, 'slots': comp_slots_data})
-                data_pd = data.copy()
-
-                for slot_idx in range(0, len(id2slot)):
-                    if slot_idx in comp_slots_data:
-                        data_pd.update({f'slot{slot_idx}_color': comp_slots_data[slot_idx]['color'],
-                                        f'slot{slot_idx}_size': comp_slots_data[slot_idx]['size'],
-                                        f'slot{slot_idx}_type': comp_slots_data[slot_idx]['type']})
-                    else:
-                        data_pd.update(
-                            {f'slot{slot_idx}_color': -1, f'slot{slot_idx}_size': -1, f'slot{slot_idx}_type': -1})
-                full_panel_data.append(data_pd)
-    return pd.DataFrame(full_panel_data), pd.DataFrame(full_rule_data)
+    return pd.concat(all_panel_df).reset_index(drop=True), pd.DataFrame(full_rule_data)
 
 
 def prepare_stage2_dataset(panels_df: pd.DataFrame, rules_df: pd.DataFrame, merge_row=True):
@@ -208,3 +214,37 @@ def prepare_stage2_dataset(panels_df: pd.DataFrame, rules_df: pd.DataFrame, merg
     final_df = reshaped_panels_df.join(rules_df)
 
     return final_df
+
+
+class AVRStage2Dataset(Dataset):
+    def __init__(self, dataset_dir, split):
+        super().__init__()
+        panels_df, rules_df = extract_stage2_ground_truth(dataset_dir, split)
+        self.final_df = prepare_stage2_dataset(panels_df, rules_df, merge_row=False)
+        self.final_df = self.final_df.reset_index()
+        self.info_cols = self.final_df.columns.tolist()[:2]
+        self.feature_cols = self.final_df.columns.tolist()[2:-5]
+        self.label_cols = self.final_df.columns.tolist()[-5:]
+        self.label2id = {'Constant': 0, 'Distribute_Three': 1, 'Progression': 2, 'Arithmetic': 3}
+
+    def __len__(self):
+        return len(self.final_df)
+
+    def __getitem__(self, idx):
+        data = self.final_df.iloc[idx]
+
+        info = data[self.info_cols].to_dict()
+
+        panels = torch.split(torch.tensor(data[self.feature_cols].values.astype(np.int64)), 22 * 3)
+        reshaped_panels = list(torch.stack(torch.split(p, 3)) for p in panels)
+        features = torch.stack(reshaped_panels)
+
+        labels = data[self.label_cols].map(self.label2id).to_dict()
+        for key, val, in labels.items():
+            labels[key] = torch.tensor(val)
+
+        return {
+            'info': info,
+            'features': features,
+            'labels': labels
+        }
