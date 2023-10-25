@@ -248,3 +248,115 @@ class AVRStage2Dataset(Dataset):
             'features': features,
             'labels': labels
         }
+
+
+# Stage 3
+
+def extract_stage3_ground_truth(dataset_dir: str, split: str):
+    dataset_path = Path(dataset_dir)
+    all_file_stems = list(fn.stem for fn in (dataset_path / Path(configurations[0])).glob(f'*_{split}.npz'))
+    all_file_paths = [Path(dataset_path, config, base_fn) for config, base_fn in
+                      product(configurations, all_file_stems)]
+
+    all_panel_df = []
+    full_rule_data = []
+    full_target_data = []
+
+    for file_path in all_file_paths:
+        xml = ET.parse(file_path.with_suffix('.xml'))
+        npz = np.load(file_path.with_suffix('.npz'))
+        xml_root = xml.getroot()
+        panel_info_list = parse_panels(xml_root)
+        component_rules = parse_rules(xml_root)
+        context_panels = panel_info_list[6:]
+        
+        full_target_data.append({'file': str(file_path), 'target': npz['target'].item()})
+
+        # Get rules (labels)
+        for component in component_rules:
+            cid = int(component['component_id'])
+            rule_data = {'file_path': str(file_path)}
+            for rule in component['rules']:
+                if (rule['attr'] == 'Number/Position') or (rule['attr'] == 'Number') or (rule['attr'] == 'Position'):
+                    rule_data[f'component{cid}_number'] = rule['name']
+                    rule_data[f'component{cid}_position'] = rule['name']
+                elif rule['attr'] == 'Type':
+                    rule_data[f'component{cid}_type'] = rule['name']
+                elif rule['attr'] == 'Size':
+                    rule_data[f'component{cid}_size'] = rule['name']
+                elif rule['attr'] == 'Color':
+                    rule_data[f'component{cid}_color'] = rule['name']
+            full_rule_data.append(rule_data)
+
+        # Get discrete panel representations (features)
+        panel_df = panel_dict_to_df(range(6, 16), context_panels, str(file_path))
+        all_panel_df.append(panel_df)
+
+    return (pd.concat(all_panel_df).reset_index(drop=True),
+            pd.DataFrame(full_rule_data),
+            pd.DataFrame(full_target_data))
+
+
+def prepare_stage3_dataset(panels_df: pd.DataFrame, rules_df: pd.DataFrame, target_df: pd.DataFrame):
+    panels_df_copy = panels_df.copy()
+    reshaped_indices = ['file', 'component', 'panel']
+
+    reshaped_panels_df = panels_df_copy.set_index(reshaped_indices).unstack(level=-1)
+    reshaped_panels_df.columns.names = ['slot_attr', 'panel']
+    reshaped_panels_df.columns = reshaped_panels_df.columns.swaplevel(0, 1)
+    reshaped_panels_df = reshaped_panels_df.sort_index(axis=1, level=0)
+
+    index_tuples = []
+    for panel_idx, slot_idx, attr in list(product(range(6, 16),
+                                                  range(0, 22),
+                                                  ['color', 'size', 'type'])):
+        index_tuples.append((panel_idx, f'slot{slot_idx}_{attr}'))
+    multi_index = pd.MultiIndex.from_tuples(index_tuples, names=['panel', 'slot_attr'])
+    reshaped_panels_df = pd.DataFrame(reshaped_panels_df, columns=multi_index)
+
+    reshaped_panels_df.columns = reshaped_panels_df.columns.map(lambda x: 'panel' + '_'.join(list(map(str, x))))
+    reshaped_panels_df = reshaped_panels_df.groupby('file').max()
+    
+    # return reshaped_panels_df
+    rules_df = rules_df.rename(columns={'file_path': 'file'})
+    rules_df = rules_df.set_index(['file'])
+
+    final_df = reshaped_panels_df.join(rules_df).join(target_df.set_index(['file']))
+
+    return final_df
+
+
+class AVRStage3Dataset(Dataset):
+    def __init__(self, dataset_dir, split):
+        super().__init__()
+        panels_df, rules_df, targets_df = extract_stage3_ground_truth(dataset_dir, split)
+        self.final_df = prepare_stage3_dataset(panels_df, rules_df, targets_df)
+        self.final_df = self.final_df.reset_index()
+        self.info_col = self.final_df.columns.tolist()[0]
+        self.panel_cols = self.final_df.columns.tolist()[1:-11]
+        self.rule_cols = self.final_df.columns.tolist()[-11:-1]
+        self.target_col = self.final_df.columns.tolist()[-1]
+        self.rule2id = {'Constant': 0, 'Distribute_Three': 1, 'Progression': 2, 'Arithmetic': 3, -1: -1}
+    
+    def __len__(self):
+        return len(self.final_df)
+    
+    def __getitem__(self, idx):
+        data = self.final_df.iloc[idx]
+
+        info = data[self.info_col]
+
+        panels = torch.split(torch.tensor(data[self.panel_cols].values.astype(np.int64)), 22 * 3)
+        reshaped_panels = list(torch.stack(torch.split(p, 3)) for p in panels)
+        panel_features = torch.stack(reshaped_panels)
+        
+        rules = data[self.rule_cols].replace(np.nan, -1).map(self.rule2id).to_dict()
+        for key, val, in rules.items():
+            rules[key] = torch.tensor(val)
+
+        return {
+            'info': info,
+            'panels': panel_features,
+            'rules': rules,
+            'target': data[self.target_col]
+        }
