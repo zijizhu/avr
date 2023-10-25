@@ -358,5 +358,5 @@ class AVRStage3Dataset(Dataset):
             'info': info,
             'panels': panel_features,
             'rules': rules,
-            'target': data[self.target_col]
+            'target': torch.tensor(data[self.target_col])
         }
