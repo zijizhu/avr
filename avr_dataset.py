@@ -252,7 +252,7 @@ class AVRStage2Dataset(Dataset):
 
 # Stage 3
 
-def extract_stage3_ground_truth(dataset_dir: str, split: str):
+def extract_stage3_ground_truth(dataset_dir: str, split: str, all_panels=True):
     dataset_path = Path(dataset_dir)
     all_file_stems = list(fn.stem for fn in (dataset_path / Path(configurations[0])).glob(f'*_{split}.npz'))
     all_file_paths = [Path(dataset_path, config, base_fn) for config, base_fn in
@@ -268,14 +268,14 @@ def extract_stage3_ground_truth(dataset_dir: str, split: str):
         xml_root = xml.getroot()
         panel_info_list = parse_panels(xml_root)
         component_rules = parse_rules(xml_root)
-        context_panels = panel_info_list[6:]
+        panels = panel_info_list if all_panels else panel_info_list[6:]
         
         full_target_data.append({'file': str(file_path), 'target': npz['target'].item()})
 
         # Get rules (labels)
+        rule_data = {'file_path': str(file_path)}
         for component in component_rules:
             cid = int(component['component_id'])
-            rule_data = {'file_path': str(file_path)}
             for rule in component['rules']:
                 if (rule['attr'] == 'Number/Position') or (rule['attr'] == 'Number') or (rule['attr'] == 'Position'):
                     rule_data[f'component{cid}_number'] = rule['name']
@@ -286,10 +286,11 @@ def extract_stage3_ground_truth(dataset_dir: str, split: str):
                     rule_data[f'component{cid}_size'] = rule['name']
                 elif rule['attr'] == 'Color':
                     rule_data[f'component{cid}_color'] = rule['name']
-            full_rule_data.append(rule_data)
+        full_rule_data.append(rule_data)
 
         # Get discrete panel representations (features)
-        panel_df = panel_dict_to_df(range(6, 16), context_panels, str(file_path))
+        panel_idx_range = range(16) if all_panels else range(6, 16)
+        panel_df = panel_dict_to_df(panel_idx_range, panels, str(file_path))
         all_panel_df.append(panel_df)
 
     return (pd.concat(all_panel_df).reset_index(drop=True),
@@ -297,7 +298,7 @@ def extract_stage3_ground_truth(dataset_dir: str, split: str):
             pd.DataFrame(full_target_data))
 
 
-def prepare_stage3_dataset(panels_df: pd.DataFrame, rules_df: pd.DataFrame, target_df: pd.DataFrame):
+def prepare_stage3_dataset(panels_df: pd.DataFrame, rules_df: pd.DataFrame | None, target_df: pd.DataFrame, all_panels=True):
     panels_df_copy = panels_df.copy()
     reshaped_indices = ['file', 'component', 'panel']
 
@@ -307,7 +308,8 @@ def prepare_stage3_dataset(panels_df: pd.DataFrame, rules_df: pd.DataFrame, targ
     reshaped_panels_df = reshaped_panels_df.sort_index(axis=1, level=0)
 
     index_tuples = []
-    for panel_idx, slot_idx, attr in list(product(range(6, 16),
+    panel_idx_range = range(16) if all_panels else range(6, 16)
+    for panel_idx, slot_idx, attr in list(product(panel_idx_range,
                                                   range(0, 22),
                                                   ['color', 'size', 'type'])):
         index_tuples.append((panel_idx, f'slot{slot_idx}_{attr}'))
@@ -318,10 +320,13 @@ def prepare_stage3_dataset(panels_df: pd.DataFrame, rules_df: pd.DataFrame, targ
     reshaped_panels_df = reshaped_panels_df.groupby('file').max()
     
     # return reshaped_panels_df
-    rules_df = rules_df.rename(columns={'file_path': 'file'})
-    rules_df = rules_df.set_index(['file'])
+    if rules_df is not None:
+        rules_df = rules_df.rename(columns={'file_path': 'file'})
+        rules_df = rules_df.set_index(['file'])
 
-    final_df = reshaped_panels_df.join(rules_df).join(target_df.set_index(['file']))
+        final_df = reshaped_panels_df.join(rules_df).join(target_df.set_index(['file']))
+    else:
+        final_df = reshaped_panels_df.join(target_df.set_index(['file']))
 
     return final_df
 
@@ -329,8 +334,8 @@ def prepare_stage3_dataset(panels_df: pd.DataFrame, rules_df: pd.DataFrame, targ
 class AVRStage3Dataset(Dataset):
     def __init__(self, dataset_dir, split):
         super().__init__()
-        panels_df, rules_df, targets_df = extract_stage3_ground_truth(dataset_dir, split)
-        self.final_df = prepare_stage3_dataset(panels_df, rules_df, targets_df)
+        panels_df, rules_df, targets_df = extract_stage3_ground_truth(dataset_dir, split, all_panels=False)
+        self.final_df = prepare_stage3_dataset(panels_df, rules_df, targets_df, all_panels=False)
         self.final_df = self.final_df.reset_index()
         self.info_col = self.final_df.columns.tolist()[0]
         self.panel_cols = self.final_df.columns.tolist()[1:-11]
