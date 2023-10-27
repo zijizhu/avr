@@ -318,8 +318,7 @@ def prepare_stage3_dataset(panels_df: pd.DataFrame, rules_df: pd.DataFrame | Non
 
     reshaped_panels_df.columns = reshaped_panels_df.columns.map(lambda x: 'panel' + '_'.join(list(map(str, x))))
     reshaped_panels_df = reshaped_panels_df.groupby('file').max()
-    
-    # return reshaped_panels_df
+
     if rules_df is not None:
         rules_df = rules_df.rename(columns={'file_path': 'file'})
         rules_df = rules_df.set_index(['file'])
@@ -363,5 +362,35 @@ class AVRStage3Dataset(Dataset):
             'info': info,
             'panels': panel_features,
             'rules': rules,
+            'target': torch.tensor(data[self.target_col])
+        }
+
+
+class AVRStage3DatasetV2(Dataset):
+    def __init__(self, dataset_dir, split):
+        super().__init__()
+        panels_df, rules_df, targets_df = extract_stage3_ground_truth(dataset_dir, split, all_panels=True)
+        self.final_df = prepare_stage3_dataset(panels_df, None, targets_df, all_panels=True)
+        self.final_df = self.final_df.reset_index()
+        self.info_col = self.final_df.columns.tolist()[0]
+        self.panel_cols = self.final_df.columns.tolist()[1:-1]
+        self.target_col = self.final_df.columns.tolist()[-1]
+        self.rule2id = {'Constant': 0, 'Distribute_Three': 1, 'Progression': 2, 'Arithmetic': 3, -1: -1}
+    
+    def __len__(self):
+        return len(self.final_df)
+    
+    def __getitem__(self, idx):
+        data = self.final_df.iloc[idx]
+
+        info = data[self.info_col]
+
+        panels = torch.split(torch.tensor(data[self.panel_cols].values.astype(np.int64)), 22 * 3)
+        # reshaped_panels = list(torch.stack(torch.split(p, 3)) for p in panels)
+        panel_features = torch.stack(panels)
+
+        return {
+            'info': info,
+            'panels': panel_features,
             'target': torch.tensor(data[self.target_col])
         }
