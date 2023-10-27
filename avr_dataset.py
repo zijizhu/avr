@@ -372,6 +372,8 @@ class AVRStage3DatasetV2(Dataset):
         panels_df, rules_df, targets_df = extract_stage3_ground_truth(dataset_dir, split, all_panels=True)
         self.final_df = prepare_stage3_dataset(panels_df, None, targets_df, all_panels=True)
         self.final_df = self.final_df.reset_index()
+        self.final_df = self.final_df.replace{-1, 12}
+        
         self.info_col = self.final_df.columns.tolist()[0]
         self.panel_cols = self.final_df.columns.tolist()[1:-1]
         self.target_col = self.final_df.columns.tolist()[-1]
