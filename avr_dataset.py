@@ -103,16 +103,21 @@ configurations = [
 id2type = ['none', 'triangle', 'square', 'pentagon', 'hexagon', 'circle']
 id2size = [0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
 id2color = [255, 224, 196, 168, 140, 112, 84, 56, 28, 0]
-id2slot = [(0.5, 0.5, 0.33, 0.33), (0.42, 0.42, 0.15, 0.15), (0.25, 0.75, 0.5, 0.5), (0.5, 0.75, 0.5, 0.5),
+id2slot_all = [(0.5, 0.5, 0.33, 0.33), (0.42, 0.42, 0.15, 0.15), (0.25, 0.75, 0.5, 0.5), (0.5, 0.75, 0.5, 0.5),
            (0.5, 0.5, 1, 1), (0.75, 0.5, 0.5, 0.5), (0.58, 0.58, 0.15, 0.15), (0.83, 0.83, 0.33, 0.33),
            (0.83, 0.16, 0.33, 0.33), (0.42, 0.58, 0.15, 0.15), (0.83, 0.5, 0.33, 0.33), (0.16, 0.5, 0.33, 0.33),
            (0.75, 0.25, 0.5, 0.5), (0.5, 0.83, 0.33, 0.33), (0.58, 0.42, 0.15, 0.15), (0.5, 0.25, 0.5, 0.5),
            (0.16, 0.83, 0.33, 0.33), (0.16, 0.16, 0.33, 0.33), (0.5, 0.16, 0.33, 0.33), (0.25, 0.5, 0.5, 0.5),
            (0.75, 0.75, 0.5, 0.5), (0.25, 0.25, 0.5, 0.5)]
-slot2id = {slot: idx for idx, slot in enumerate(id2slot)}
+slot2id_all = {slot: idx for idx, slot in enumerate(id2slot_all)}
+
+id2slot_distribute9 = [(0.16, 0.16, 0.33, 0.33), (0.16, 0.5, 0.33, 0.33), (0.16, 0.83, 0.33, 0.33),
+                       (0.5, 0.16, 0.33, 0.33), (0.5, 0.5, 0.33, 0.33), (0.5, 0.83, 0.33, 0.33),
+                       (0.83, 0.16, 0.33, 0.33), (0.83, 0.5, 0.33, 0.33), (0.83, 0.83, 0.33, 0.33)]
+slot2id_distribute9 = {slot: idx for idx, slot in enumerate(id2slot_distribute9)}
 
 
-def panel_dict_to_df(indices: list | range, panel_dict: dict, file_path: str):
+def panel_dict_to_df(indices: list | range, panel_dict: dict, file_path: str, slot2id: dict = slot2id_all):
     full_panel_data = []
     for panel_idx, panel in zip(indices, panel_dict):
         for component in panel['components']:
@@ -129,7 +134,7 @@ def panel_dict_to_df(indices: list | range, panel_dict: dict, file_path: str):
             data = {'file': str(file_path), 'panel': int(panel_idx), 'component': int(component_idx)}
             data_pd = data.copy()
 
-            for slot_idx in range(0, len(id2slot)):
+            for slot_idx in range(0, len(slot2id)):
                 if slot_idx in comp_slots_data:
                     data_pd.update({f'slot{slot_idx}_color': comp_slots_data[slot_idx]['color'],
                                     f'slot{slot_idx}_size': comp_slots_data[slot_idx]['size'],
@@ -298,7 +303,12 @@ def extract_stage3_ground_truth(dataset_dir: str, split: str, all_panels=True):
             pd.DataFrame(full_target_data))
 
 
-def prepare_stage3_dataset(panels_df: pd.DataFrame, rules_df: pd.DataFrame | None, target_df: pd.DataFrame, all_panels=True):
+def prepare_stage3_dataset(
+        panels_df: pd.DataFrame,
+        rules_df: pd.DataFrame | None,
+        target_df: pd.DataFrame,
+        num_slots=22,
+        all_panels=True):
     panels_df_copy = panels_df.copy()
     reshaped_indices = ['file', 'component', 'panel']
 
@@ -310,7 +320,7 @@ def prepare_stage3_dataset(panels_df: pd.DataFrame, rules_df: pd.DataFrame | Non
     index_tuples = []
     panel_idx_range = range(16) if all_panels else range(6, 16)
     for panel_idx, slot_idx, attr in list(product(panel_idx_range,
-                                                  range(0, 22),
+                                                  range(0, num_slots),
                                                   ['color', 'size', 'type'])):
         index_tuples.append((panel_idx, f'slot{slot_idx}_{attr}'))
     multi_index = pd.MultiIndex.from_tuples(index_tuples, names=['panel', 'slot_attr'])
@@ -372,7 +382,7 @@ class AVRStage3DatasetV2(Dataset):
         panels_df, rules_df, targets_df = extract_stage3_ground_truth(dataset_dir, split, all_panels=True)
         self.final_df = prepare_stage3_dataset(panels_df, None, targets_df, all_panels=True)
         self.final_df = self.final_df.reset_index()
-        self.final_df = self.final_df.replace{-1, 12}
+        self.final_df = self.final_df.replace({-1, 12})
         
         self.info_col = self.final_df.columns.tolist()[0]
         self.panel_cols = self.final_df.columns.tolist()[1:-1]
